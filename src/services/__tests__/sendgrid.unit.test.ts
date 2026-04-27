@@ -5,20 +5,12 @@ import { jest } from '@jest/globals';
 
 const mockRequest = jest.fn() as jest.MockedFunction<any>;
 const mockSetApiKey = jest.fn();
-const mockSend = jest.fn() as jest.MockedFunction<any>;
 
 jest.unstable_mockModule('@sendgrid/client', () => ({
   Client: jest.fn().mockImplementation(() => ({
     setApiKey: mockSetApiKey,
     request: mockRequest,
   })),
-}));
-
-jest.unstable_mockModule('@sendgrid/mail', () => ({
-  default: {
-    setApiKey: mockSetApiKey,
-    send: mockSend,
-  },
 }));
 
 // Dynamic import after mocks are registered
@@ -29,7 +21,6 @@ describe('SendGridService unit tests', () => {
 
   beforeEach(() => {
     mockRequest.mockReset();
-    mockSend.mockReset();
     service = new SendGridService('SG.test_key_for_unit_tests_only');
   });
 

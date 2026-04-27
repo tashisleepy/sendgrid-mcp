@@ -1,7 +1,7 @@
 {
   "name": "sendgrid-mcp",
   "version": "1.0.0",
-  "description": "Send emails and interact with SendGrid",
+  "description": "MCP server for managing SendGrid contacts, lists, templates, and Single Send campaigns",
   "private": true,
   "type": "module",
   "bin": {
@@ -19,9 +19,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "0.6.0",
-    "@sendgrid/client": "^8.1.4",
-    "@sendgrid/helpers": "^8.0.0",
-    "@sendgrid/mail": "^8.1.4"
+    "@sendgrid/client": "^8.1.4"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

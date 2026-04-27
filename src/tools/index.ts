@@ -29,44 +29,6 @@ export const getToolDefinitions = () => [
     }
   },
   {
-    name: 'send_email',
-    description: 'Send a single transactional email using SendGrid (one recipient)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        to: {
-          type: 'string',
-          description: 'Recipient email address'
-        },
-        subject: {
-          type: 'string',
-          description: 'Email subject line'
-        },
-        text: {
-          type: 'string',
-          description: 'Plain text content of the email'
-        },
-        html: {
-          type: 'string',
-          description: 'HTML content of the email (optional)'
-        },
-        from: {
-          type: 'string',
-          description: 'Sender email address (must be verified with SendGrid)'
-        },
-        template_id: {
-          type: 'string',
-          description: 'SendGrid template ID (optional)'
-        },
-        dynamic_template_data: {
-          type: 'object',
-          description: 'Dynamic data for template variables (optional)'
-        }
-      },
-      required: ['to', 'subject', 'text', 'from']
-    }
-  },
-  {
     name: 'add_contact',
     description: 'Add a contact to your SendGrid marketing contacts',
     inputSchema: {
@@ -420,11 +382,6 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
           })), null, 2)
         }]
       };
-    }
-
-    case 'send_email': {
-      await service.sendEmail(args);
-      return { content: [{ type: 'text', text: `Email sent successfully to ${args.to}` }] };
     }
 
     case 'add_contact': {

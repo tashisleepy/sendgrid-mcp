@@ -1,5 +1,4 @@
 import { Client } from '@sendgrid/client';
-import sgMail from '@sendgrid/mail';
 import { SendGridContact, SendGridList, SendGridTemplate, SendGridStats, SendGridSingleSend } from '../types/index.js';
 
 // Escape single quotes and backslashes for SendGrid query DSL string literals.
@@ -26,20 +25,6 @@ export class SendGridService {
   constructor(apiKey: string) {
     this.client = new Client();
     this.client.setApiKey(apiKey);
-    sgMail.setApiKey(apiKey);
-  }
-
-  // Email Sending
-  async sendEmail(params: {
-    to: string;
-    from: string;
-    subject: string;
-    text: string;
-    html?: string;
-    template_id?: string;
-    dynamic_template_data?: Record<string, any>;
-  }) {
-    return await sgMail.send(params);
   }
 
   // Contact Management
