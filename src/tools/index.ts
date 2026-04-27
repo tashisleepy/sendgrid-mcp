@@ -1,7 +1,7 @@
 import { SendGridService } from '../services/sendgrid.js';
-import { SendGridContact, SendGridTemplate, SendGridSingleSend } from '../types/index.js';
+import { SendGridContact, SendGridSingleSend } from '../types/index.js';
 
-export const getToolDefinitions = (service: SendGridService) => [
+export const getToolDefinitions = () => [
   {
     name: 'delete_contacts',
     description: 'Delete contacts from your SendGrid account',
@@ -21,7 +21,7 @@ export const getToolDefinitions = (service: SendGridService) => [
   },
   {
     name: 'list_contacts',
-    description: 'List all contacts in your SendGrid account',
+    description: 'List all contacts in your SendGrid account (paginated, capped at 10000)',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -30,7 +30,7 @@ export const getToolDefinitions = (service: SendGridService) => [
   },
   {
     name: 'send_email',
-    description: 'Send an email using SendGrid',
+    description: 'Send a single transactional email using SendGrid (one recipient)',
     inputSchema: {
       type: 'object',
       properties: {
@@ -108,7 +108,7 @@ export const getToolDefinitions = (service: SendGridService) => [
   },
   {
     name: 'add_contacts_to_list',
-    description: 'Add contacts to an existing SendGrid list',
+    description: 'Add contacts to an existing SendGrid list. NOTE: This endpoint also creates contacts that do not already exist as a side effect of the upsert.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -129,7 +129,7 @@ export const getToolDefinitions = (service: SendGridService) => [
   },
   {
     name: 'create_template',
-    description: 'Create a new email template in SendGrid',
+    description: 'Create a new dynamic email template (with version) in SendGrid',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,7 +207,7 @@ export const getToolDefinitions = (service: SendGridService) => [
         },
         end_date: {
           type: 'string',
-          description: 'End date in YYYY-MM-DD format (optional)'
+          description: 'End date in YYYY-MM-DD format (optional, must be on or after start_date)'
         },
         aggregated_by: {
           type: 'string',
@@ -283,8 +283,8 @@ export const getToolDefinitions = (service: SendGridService) => [
     }
   },
   {
-    name: 'send_to_list',
-    description: 'Send an email to a contact list using SendGrid Single Sends',
+    name: 'create_single_send_draft',
+    description: 'Create a Single Send DRAFT to one or more contact lists. Does NOT send. Returns a single_send_id which must be passed to schedule_single_send (with confirm: true) to actually deliver. This two-step flow prevents accidental mass sends.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -325,6 +325,28 @@ export const getToolDefinitions = (service: SendGridService) => [
         }
       },
       required: ['name', 'list_ids', 'subject', 'html_content', 'plain_content', 'sender_id']
+    }
+  },
+  {
+    name: 'schedule_single_send',
+    description: 'Schedule a previously-created Single Send draft for delivery. Requires confirm: true to guard against accidental sends. Use send_at: "now" for immediate delivery or an ISO 8601 timestamp for scheduled delivery.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        single_send_id: {
+          type: 'string',
+          description: 'ID of the single send draft to schedule (returned by create_single_send_draft)'
+        },
+        send_at: {
+          type: 'string',
+          description: 'When to send: "now" for immediate or ISO 8601 timestamp (e.g. "2026-05-01T09:00:00Z")'
+        },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true to actually schedule the send. Required guard against accidental mass-email.'
+        }
+      },
+      required: ['single_send_id', 'send_at', 'confirm']
     }
   },
   {
@@ -375,60 +397,80 @@ export const getToolDefinitions = (service: SendGridService) => [
 
 export const handleToolCall = async (service: SendGridService, name: string, args: any) => {
   switch (name) {
-    case 'delete_contacts':
-      await service.deleteContactsByEmails(args.emails);
-      return { content: [{ type: 'text', text: `Successfully deleted ${args.emails.length} contacts` }] };
+    case 'delete_contacts': {
+      const requested = args.emails.length;
+      const deleted = await service.deleteContactsByEmails(args.emails);
+      const skipped = requested - deleted;
+      const text = skipped > 0
+        ? `Deleted ${deleted} of ${requested} contacts (${skipped} not found)`
+        : `Deleted ${deleted} contacts`;
+      return { content: [{ type: 'text', text }] };
+    }
 
-    case 'list_contacts':
+    case 'list_contacts': {
       const allContacts = await service.listAllContacts();
       return {
         content: [{
           type: 'text',
           text: JSON.stringify(allContacts.map(c => ({
+            id: c.id,
             email: c.email,
             first_name: c.first_name,
             last_name: c.last_name
           })), null, 2)
         }]
       };
+    }
 
-    case 'send_email':
+    case 'send_email': {
       await service.sendEmail(args);
       return { content: [{ type: 'text', text: `Email sent successfully to ${args.to}` }] };
+    }
 
-    case 'add_contact':
+    case 'add_contact': {
       await service.addContact(args as SendGridContact);
       return { content: [{ type: 'text', text: `Contact ${args.email} added successfully` }] };
+    }
 
-    case 'create_contact_list':
+    case 'create_contact_list': {
       const list = await service.createList(args.name);
       return { content: [{ type: 'text', text: `Contact list "${args.name}" created with ID: ${list.id}` }] };
+    }
 
-    case 'add_contacts_to_list':
+    case 'add_contacts_to_list': {
       await service.addContactsToList(args.list_id, args.emails);
-      return { content: [{ type: 'text', text: `Added ${args.emails.length} contacts to list ${args.list_id}` }] };
+      return { content: [{ type: 'text', text: `Upserted ${args.emails.length} contacts to list ${args.list_id} (existing contacts updated, new emails created and added)` }] };
+    }
 
-    case 'create_template':
+    case 'create_template': {
       const template = await service.createTemplate(args);
       return { content: [{ type: 'text', text: `Template "${args.name}" created with ID: ${template.id}` }] };
+    }
 
-    case 'get_template':
+    case 'get_template': {
       const retrievedTemplate = await service.getTemplate(args.template_id);
       return { content: [{ type: 'text', text: JSON.stringify(retrievedTemplate, null, 2) }] };
+    }
 
-    case 'delete_template':
+    case 'delete_template': {
       await service.deleteTemplate(args.template_id);
       return { content: [{ type: 'text', text: `Template ${args.template_id} deleted successfully` }] };
+    }
 
-    case 'validate_email':
+    case 'validate_email': {
       const validation = await service.validateEmail(args.email);
       return { content: [{ type: 'text', text: JSON.stringify(validation, null, 2) }] };
+    }
 
-    case 'get_stats':
+    case 'get_stats': {
+      if (args.end_date && args.start_date && args.end_date < args.start_date) {
+        throw new Error(`end_date (${args.end_date}) must be on or after start_date (${args.start_date})`);
+      }
       const stats = await service.getStats(args);
       return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
+    }
 
-    case 'list_templates':
+    case 'list_templates': {
       const templates = await service.listTemplates();
       return {
         content: [{
@@ -442,12 +484,14 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
           })), null, 2)
         }]
       };
+    }
 
-    case 'delete_list':
+    case 'delete_list': {
       await service.deleteList(args.list_id);
       return { content: [{ type: 'text', text: `Contact list ${args.list_id} deleted successfully` }] };
+    }
 
-    case 'list_contact_lists':
+    case 'list_contact_lists': {
       const lists = await service.listContactLists();
       return {
         content: [{
@@ -459,21 +503,24 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
           })), null, 2)
         }]
       };
+    }
 
-    case 'get_contacts_by_list':
+    case 'get_contacts_by_list': {
       const contacts = await service.getContactsByList(args.list_id);
       return {
         content: [{
           type: 'text',
           text: JSON.stringify(contacts.map(c => ({
+            id: c.id,
             email: c.email,
             first_name: c.first_name,
             last_name: c.last_name
           })), null, 2)
         }]
       };
+    }
 
-    case 'list_verified_senders':
+    case 'list_verified_senders': {
       const senders = await service.getVerifiedSenders();
       return {
         content: [{
@@ -481,8 +528,9 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
           text: JSON.stringify(senders, null, 2)
         }]
       };
+    }
 
-    case 'list_suppression_groups':
+    case 'list_suppression_groups': {
       const groups = await service.getSuppressionGroups();
       return {
         content: [{
@@ -490,8 +538,9 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
           text: JSON.stringify(groups, null, 2)
         }]
       };
+    }
 
-    case 'send_to_list':
+    case 'create_single_send_draft': {
       if (!args.suppression_group_id && !args.custom_unsubscribe_url) {
         throw new Error('Either suppression_group_id or custom_unsubscribe_url must be provided');
       }
@@ -510,18 +559,30 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
           custom_unsubscribe_url: args.custom_unsubscribe_url
         }
       });
-      
-      // Schedule it to send immediately
-      await service.scheduleSingleSend(newSingleSend.id, 'now');
-      
+
       return {
         content: [{
           type: 'text',
-          text: `Email "${args.name}" has been sent to the specified lists`
+          text: `Draft "${args.name}" created with single_send_id: ${newSingleSend.id}. NOT YET SENT. Call schedule_single_send with this id and confirm: true to deliver.`
         }]
       };
+    }
 
-    case 'get_single_send':
+    case 'schedule_single_send': {
+      if (args.confirm !== true) {
+        throw new Error('schedule_single_send requires confirm: true to guard against accidental delivery. Pass confirm: true explicitly when you want to send.');
+      }
+      await service.scheduleSingleSend(args.single_send_id, args.send_at);
+      const when = args.send_at === 'now' ? 'immediately' : `at ${args.send_at}`;
+      return {
+        content: [{
+          type: 'text',
+          text: `Single send ${args.single_send_id} scheduled to deliver ${when}.`
+        }]
+      };
+    }
+
+    case 'get_single_send': {
       const retrievedSingleSend = await service.getSingleSend(args.single_send_id);
       return {
         content: [{
@@ -531,12 +592,13 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
             name: retrievedSingleSend.name,
             status: retrievedSingleSend.status,
             send_at: retrievedSingleSend.send_at,
-            list_ids: retrievedSingleSend.send_to.list_ids
+            list_ids: retrievedSingleSend.send_to?.list_ids
           }, null, 2)
         }]
       };
+    }
 
-    case 'list_single_sends':
+    case 'list_single_sends': {
       const allSingleSends = await service.listSingleSends();
       return {
         content: [{
@@ -549,10 +611,17 @@ export const handleToolCall = async (service: SendGridService, name: string, arg
           })), null, 2)
         }]
       };
+    }
 
-    case 'remove_contacts_from_list':
-      await service.removeContactsFromList(args.list_id, args.emails);
-      return { content: [{ type: 'text', text: `Removed ${args.emails.length} contacts from list ${args.list_id}` }] };
+    case 'remove_contacts_from_list': {
+      const requested = args.emails.length;
+      const removed = await service.removeContactsFromList(args.list_id, args.emails);
+      const skipped = requested - removed;
+      const text = skipped > 0
+        ? `Removed ${removed} of ${requested} contacts from list ${args.list_id} (${skipped} not on list or not found)`
+        : `Removed ${removed} contacts from list ${args.list_id}`;
+      return { content: [{ type: 'text', text }] };
+    }
 
     default:
       throw new Error(`Unknown tool: ${name}`);

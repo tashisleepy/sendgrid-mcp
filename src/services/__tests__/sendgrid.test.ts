@@ -1,9 +1,16 @@
 import { jest } from '@jest/globals';
 import { SendGridService } from '../sendgrid.js';
 
-describe('SendGridService Integration Tests', () => {
+// SAFETY GATE: integration tests hit the live SendGrid API and mutate the
+// configured account. They are skipped unless RUN_INTEGRATION=1 is set
+// alongside SENDGRID_API_KEY (ideally a sandbox account).
+const describeIntegration = process.env.RUN_INTEGRATION && process.env.SENDGRID_API_KEY
+  ? describe
+  : describe.skip;
+
+describeIntegration('SendGridService Integration Tests', () => {
   let service: SendGridService;
-  
+
   beforeEach(() => {
     service = new SendGridService(process.env.SENDGRID_API_KEY!);
   });

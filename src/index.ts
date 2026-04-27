@@ -41,7 +41,7 @@ const server = new Server(
  */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: getToolDefinitions(sendGridService)
+    tools: getToolDefinitions()
   };
 });
 
@@ -53,8 +53,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     return await handleToolCall(sendGridService, request.params.name, request.params.arguments);
   } catch (error: any) {
-    console.error('SendGrid Error:', error);
-    
+    // Sanitize before logging: axios errors carry error.config.headers (Authorization
+    // bearer token = SendGrid API key) and error.response.body (recipient PII).
+    // Logging the raw error object would leak both to stderr.
+    console.error('SendGrid Error:', {
+      message: error?.message,
+      status: error?.response?.statusCode ?? error?.code,
+      errors: error?.response?.body?.errors?.map((e: { message: string }) => e.message),
+    });
+
     // Handle SendGrid API errors
     if (error.response?.body?.errors) {
       throw new McpError(
@@ -62,7 +69,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `SendGrid API Error: ${error.response.body.errors.map((e: { message: string }) => e.message).join(', ')}`
       );
     }
-    
+
     // Handle other errors
     if (error instanceof Error) {
       throw new McpError(
@@ -70,7 +77,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         error.message
       );
     }
-    
+
     throw new McpError(ErrorCode.InternalError, 'An unexpected error occurred');
   }
 });

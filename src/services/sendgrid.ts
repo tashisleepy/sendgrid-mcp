@@ -9,6 +9,17 @@ function escapeQueryValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+// SendGrid IDs are alphanumeric with optional hyphens/underscores (e.g. UUIDs,
+// dynamic template IDs like `d-abc123`). This guard prevents path traversal
+// when an LLM-supplied ID is interpolated into a REST URL path. Without it,
+// an ID like `../user/profile` would route the request to a different endpoint.
+function validateSendGridId(id: unknown, label: string): string {
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new Error(`Invalid ${label}: must be alphanumeric with optional hyphens/underscores`);
+  }
+  return id;
+}
+
 export class SendGridService {
   private client: Client;
 
@@ -32,7 +43,9 @@ export class SendGridService {
   }
 
   // Contact Management
-  async deleteContactsByEmails(emails: string[]): Promise<void> {
+  // Returns the number of contacts actually deleted (which may be less than
+  // emails.length if some emails do not match any existing contact).
+  async deleteContactsByEmails(emails: string[]): Promise<number> {
     // First get the contact IDs for the emails
     const [searchResponse] = await this.client.request({
       method: 'POST',
@@ -55,17 +68,46 @@ export class SendGridService {
         }
       });
     }
+
+    return contactIds.length;
   }
 
+  // Walks SendGrid's contact search pagination and returns every result.
+  // Capped at MAX_CONTACTS as a safety rail against runaway iteration on
+  // very large accounts.
   async listAllContacts(): Promise<SendGridContact[]> {
-    const [response] = await this.client.request({
-      method: 'POST',
-      url: '/v3/marketing/contacts/search',
-      body: {
-        query: "email IS NOT NULL" // Get all contacts that have an email
-      }
-    });
-    return (response.body as { result: SendGridContact[] }).result || [];
+    const MAX_CONTACTS = 10000;
+    const all: SendGridContact[] = [];
+    let nextUrl: string | undefined;
+
+    while (all.length < MAX_CONTACTS) {
+      const [response] = await this.client.request(
+        nextUrl
+          ? { method: 'GET', url: nextUrl }
+          : {
+              method: 'POST',
+              url: '/v3/marketing/contacts/search',
+              body: { query: 'email IS NOT NULL' },
+            }
+      );
+
+      const body = response.body as {
+        result?: SendGridContact[];
+        _metadata?: { next?: string };
+      };
+
+      const page = body.result || [];
+      if (page.length === 0) break;
+      all.push(...page);
+
+      // SendGrid returns the absolute next URL in _metadata.next when more
+      // pages exist; the @sendgrid/client request() accepts absolute URLs
+      // and routes them correctly.
+      nextUrl = body._metadata?.next;
+      if (!nextUrl) break;
+    }
+
+    return all;
   }
 
   async addContact(contact: SendGridContact) {
@@ -91,9 +133,10 @@ export class SendGridService {
   }
 
   async getList(listId: string): Promise<SendGridList> {
+    const safeId = validateSendGridId(listId, 'listId');
     const [response] = await this.client.request({
       method: 'GET',
-      url: `/v3/marketing/lists/${listId}`
+      url: `/v3/marketing/lists/${safeId}`
     });
     return response.body as SendGridList;
   }
@@ -107,9 +150,10 @@ export class SendGridService {
   }
 
   async deleteList(listId: string): Promise<void> {
+    const safeId = validateSendGridId(listId, 'listId');
     await this.client.request({
       method: 'DELETE',
-      url: `/v3/marketing/lists/${listId}`
+      url: `/v3/marketing/lists/${safeId}`
     });
   }
 
@@ -122,7 +166,11 @@ export class SendGridService {
     return response.body as SendGridList;
   }
 
+  // NOTE: This endpoint creates contacts that don't already exist as a side
+  // effect. Passing a brand-new email here both creates the contact AND adds
+  // it to the list in a single PUT.
   async addContactsToList(listId: string, contactEmails: string[]) {
+    validateSendGridId(listId, 'listId');
     const [response] = await this.client.request({
       method: 'PUT',
       url: '/v3/marketing/contacts',
@@ -134,13 +182,16 @@ export class SendGridService {
     return response;
   }
 
-  async removeContactsFromList(listId: string, contactEmails: string[]) {
+  // Returns the number of contacts actually removed from the list (which may
+  // be less than contactEmails.length if some emails are not on the list).
+  async removeContactsFromList(listId: string, contactEmails: string[]): Promise<number> {
+    const safeListId = validateSendGridId(listId, 'listId');
     // First get the contact IDs for the emails
     const [searchResponse] = await this.client.request({
       method: 'POST',
       url: '/v3/marketing/contacts/search',
       body: {
-        query: `email IN (${contactEmails.map(email => `'${escapeQueryValue(email)}'`).join(',')}) AND CONTAINS(list_ids, '${escapeQueryValue(listId)}')`
+        query: `email IN (${contactEmails.map(email => `'${escapeQueryValue(email)}'`).join(',')}) AND CONTAINS(list_ids, '${escapeQueryValue(safeListId)}')`
       }
     });
 
@@ -151,12 +202,14 @@ export class SendGridService {
       // Remove the contacts from the list
       await this.client.request({
         method: 'DELETE',
-        url: `/v3/marketing/lists/${listId}/contacts`,
+        url: `/v3/marketing/lists/${safeListId}/contacts`,
         qs: {
           contact_ids: contactIds.join(',')
         }
       });
     }
+
+    return contactIds.length;
   }
 
   // Template Management
@@ -176,36 +229,50 @@ export class SendGridService {
     });
 
     const templateId = (response.body as { id: string }).id;
-    
-    // Create the first version of the template
-    const [versionResponse] = await this.client.request({
-      method: 'POST',
-      url: `/v3/templates/${templateId}/versions`,
-      body: {
-        template_id: templateId,
-        name: `${params.name} v1`,
-        subject: params.subject,
-        html_content: params.html_content,
-        plain_content: params.plain_content,
-        active: 1
-      }
-    });
 
-    return {
-      id: templateId,
-      name: params.name,
-      generation: 'dynamic',
-      updated_at: new Date().toISOString(),
-      versions: [{
-        id: (versionResponse.body as { id: string }).id,
-        template_id: templateId,
-        active: 1,
-        name: `${params.name} v1`,
-        html_content: params.html_content,
-        plain_content: params.plain_content,
-        subject: params.subject
-      }]
-    };
+    try {
+      // Create the first version of the template
+      const [versionResponse] = await this.client.request({
+        method: 'POST',
+        url: `/v3/templates/${validateSendGridId(templateId, 'templateId')}/versions`,
+        body: {
+          template_id: templateId,
+          name: `${params.name} v1`,
+          subject: params.subject,
+          html_content: params.html_content,
+          plain_content: params.plain_content,
+          active: 1
+        }
+      });
+
+      return {
+        id: templateId,
+        name: params.name,
+        generation: 'dynamic',
+        updated_at: new Date().toISOString(),
+        versions: [{
+          id: (versionResponse.body as { id: string }).id,
+          template_id: templateId,
+          active: 1,
+          name: `${params.name} v1`,
+          html_content: params.html_content,
+          plain_content: params.plain_content,
+          subject: params.subject
+        }]
+      };
+    } catch (versionErr) {
+      // Clean up the orphaned empty template so a failed version creation
+      // doesn't leak template-quota inside the client's SendGrid account.
+      try {
+        await this.deleteTemplate(templateId);
+      } catch (cleanupErr: any) {
+        console.error('Failed to clean up orphaned template:', {
+          templateId,
+          message: cleanupErr?.message,
+        });
+      }
+      throw versionErr;
+    }
   }
 
   async listTemplates(): Promise<SendGridTemplate[]> {
@@ -220,17 +287,19 @@ export class SendGridService {
   }
 
   async getTemplate(templateId: string): Promise<SendGridTemplate> {
+    const safeId = validateSendGridId(templateId, 'templateId');
     const [response] = await this.client.request({
       method: 'GET',
-      url: `/v3/templates/${templateId}`
+      url: `/v3/templates/${safeId}`
     });
     return response.body as SendGridTemplate;
   }
 
   async deleteTemplate(templateId: string): Promise<void> {
+    const safeId = validateSendGridId(templateId, 'templateId');
     await this.client.request({
       method: 'DELETE',
-      url: `/v3/templates/${templateId}`
+      url: `/v3/templates/${safeId}`
     });
   }
 
@@ -284,9 +353,10 @@ export class SendGridService {
   }
 
   async scheduleSingleSend(singleSendId: string, sendAt: 'now' | string) {
+    const safeId = validateSendGridId(singleSendId, 'singleSendId');
     const [response] = await this.client.request({
       method: 'PUT',
-      url: `/v3/marketing/singlesends/${singleSendId}/schedule`,
+      url: `/v3/marketing/singlesends/${safeId}/schedule`,
       body: {
         send_at: sendAt
       }
@@ -295,9 +365,10 @@ export class SendGridService {
   }
 
   async getSingleSend(singleSendId: string): Promise<SendGridSingleSend> {
+    const safeId = validateSendGridId(singleSendId, 'singleSendId');
     const [response] = await this.client.request({
       method: 'GET',
-      url: `/v3/marketing/singlesends/${singleSendId}`
+      url: `/v3/marketing/singlesends/${safeId}`
     });
     return response.body as SendGridSingleSend;
   }
