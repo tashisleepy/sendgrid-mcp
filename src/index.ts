@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { SendGridService } from "./services/sendgrid.js";
 import { getToolDefinitions, handleToolCall } from "./tools/index.js";
+import { logger } from "./utils/logger.js";
 
 // Initialize SendGrid with API key from environment variable
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
@@ -56,7 +57,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Sanitize before logging: axios errors carry error.config.headers (Authorization
     // bearer token = SendGrid API key) and error.response.body (recipient PII).
     // Logging the raw error object would leak both to stderr.
-    console.error('SendGrid Error:', {
+    logger.error('tool call failed', {
+      tool: request.params.name,
       message: error?.message,
       status: error?.response?.statusCode ?? error?.code,
       errors: error?.response?.body?.errors?.map((e: { message: string }) => e.message),
@@ -88,10 +90,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('SendGrid MCP server running on stdio');
+  logger.info('server started', {
+    transport: 'stdio',
+    readOnly: /^(1|true|yes)$/i.test(process.env.SENDGRID_READ_ONLY || ''),
+  });
 }
 
 main().catch((error) => {
-  console.error("Server error:", error);
+  logger.error('server failed to start', { message: error?.message });
   process.exit(1);
 });

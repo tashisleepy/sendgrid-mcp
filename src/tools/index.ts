@@ -1,5 +1,12 @@
 import { SendGridService } from '../services/sendgrid.js';
 import { SendGridContact, SendGridSingleSend } from '../types/index.js';
+import { validateToolArgs, DESTRUCTIVE_TOOLS, ToolName } from '../utils/schemas.js';
+import { logger, requestId } from '../utils/logger.js';
+
+// Read-only mode is opt-in via env. When set, the server refuses to call
+// any tool that would mutate the SendGrid account (creates, deletes, sends).
+// Useful for audits where the operator wants to guarantee no side effects.
+const READ_ONLY_MODE = /^(1|true|yes)$/i.test(process.env.SENDGRID_READ_ONLY || '');
 
 export const getToolDefinitions = () => [
   {
@@ -357,7 +364,29 @@ export const getToolDefinitions = () => [
   }
 ];
 
-export const handleToolCall = async (service: SendGridService, name: string, args: any) => {
+export const handleToolCall = async (service: SendGridService, name: string, rawArgs: any) => {
+  const rid = requestId();
+  const startedAt = Date.now();
+
+  // Read-only safety mode
+  if (READ_ONLY_MODE && DESTRUCTIVE_TOOLS.has(name)) {
+    logger.warn('blocked destructive tool in read-only mode', { rid, tool: name });
+    throw new Error(
+      `Tool "${name}" is blocked: server is in read-only mode (SENDGRID_READ_ONLY=1). ` +
+      `Unset the env var to allow mutations.`
+    );
+  }
+
+  // Runtime input validation. MCP SDK 0.6.0 declares JSON Schema in tool
+  // definitions but does NOT enforce it — `args` arrives as `any`. Zod is the
+  // actual gate.
+  const args = validateToolArgs(name as ToolName, rawArgs) as any;
+  logger.info('tool call', { rid, tool: name });
+
+  // The top-level error handler in src/index.ts logs failures. Successful
+  // completion is implicit in the absence of an error log for this rid.
+  void startedAt;
+
   switch (name) {
     case 'delete_contacts': {
       const requested = args.emails.length;
