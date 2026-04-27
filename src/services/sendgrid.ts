@@ -68,9 +68,11 @@ export class SendGridService {
   }
 
   // Walks SendGrid's contact search pagination and returns every result.
-  // Capped at MAX_CONTACTS as a safety rail.
+  // Capped at MAX_CONTACTS as a safety rail. Override via the
+  // SENDGRID_MAX_CONTACTS env var if a client account exceeds 10000 contacts.
   async listAllContacts(): Promise<SendGridContact[]> {
-    const MAX_CONTACTS = 10000;
+    const envCap = Number(process.env.SENDGRID_MAX_CONTACTS);
+    const MAX_CONTACTS = Number.isFinite(envCap) && envCap > 0 ? envCap : 10000;
     const all: SendGridContact[] = [];
     let nextUrl: string | undefined;
 

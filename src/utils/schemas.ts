@@ -95,10 +95,8 @@ export const TOOL_SCHEMAS = {
     send_at: z
       .string()
       .refine(
-        (v) =>
-          v === 'now' ||
-          (!Number.isNaN(Date.parse(v)) && Date.parse(v) >= Date.now() - 60_000),
-        { message: 'send_at must be "now" or an ISO 8601 timestamp at or after the current time' }
+        (v) => v === 'now' || (!Number.isNaN(Date.parse(v)) && Date.parse(v) >= Date.now()),
+        { message: 'send_at must be "now" or an ISO 8601 timestamp in the future' }
       ),
     confirm: z.literal(true, {
       message: 'confirm must be exactly true to authorize delivery',

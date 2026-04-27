@@ -105,24 +105,13 @@ Remove contacts from a SendGrid list without deleting them.
 }
 ```
 
-### Email Sending
+### Sending campaigns to lists
 
-#### send_email
-Send an email using SendGrid.
-```typescript
-{
-  to: string;                             // Required: Recipient email address
-  subject: string;                        // Required: Email subject line
-  text: string;                          // Required: Plain text content
-  from: string;                          // Required: Verified sender email address
-  html?: string;                         // Optional: HTML content
-  template_id?: string;                  // Optional: Dynamic template ID
-  dynamic_template_data?: object;        // Optional: Template variables
-}
-```
+This fork removed the single-recipient `send_email` tool. Mass send is split
+into a deliberate two-step flow to prevent accidental delivery:
 
-#### send_to_list
-Send an email to a contact list using SendGrid Single Sends.
+#### create_single_send_draft
+Create a Single Send DRAFT. Does NOT send. Returns a `single_send_id`.
 ```typescript
 {
   name: string;                          // Required: Name of the single send
@@ -133,6 +122,17 @@ Send an email to a contact list using SendGrid Single Sends.
   sender_id: number;                     // Required: ID of the verified sender
   suppression_group_id?: number;         // Required if custom_unsubscribe_url not provided
   custom_unsubscribe_url?: string;       // Required if suppression_group_id not provided
+}
+```
+
+#### schedule_single_send
+Schedule a previously-created draft for delivery. Requires `confirm: true`
+to guard against accidental sends.
+```typescript
+{
+  single_send_id: string;                // Required: ID returned by create_single_send_draft
+  send_at: string;                       // Required: "now" or ISO 8601 timestamp at/after current time
+  confirm: true;                         // Required: Must be literal true
 }
 ```
 

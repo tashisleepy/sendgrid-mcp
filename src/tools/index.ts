@@ -449,9 +449,8 @@ export const handleToolCall = async (service: SendGridService, name: string, raw
     }
 
     case 'get_stats': {
-      if (args.end_date && args.start_date && args.end_date < args.start_date) {
-        throw new Error(`end_date (${args.end_date}) must be on or after start_date (${args.start_date})`);
-      }
+      // start_date / end_date ordering is enforced by the Zod schema
+      // before we reach here.
       const stats = await service.getStats(args);
       return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
     }
@@ -527,10 +526,8 @@ export const handleToolCall = async (service: SendGridService, name: string, raw
     }
 
     case 'create_single_send_draft': {
-      if (!args.suppression_group_id && !args.custom_unsubscribe_url) {
-        throw new Error('Either suppression_group_id or custom_unsubscribe_url must be provided');
-      }
-
+      // The suppression_group_id / custom_unsubscribe_url XOR is enforced
+      // by the Zod schema in utils/schemas.ts before we reach here.
       const newSingleSend = await service.createSingleSend({
         name: args.name,
         send_to: {
