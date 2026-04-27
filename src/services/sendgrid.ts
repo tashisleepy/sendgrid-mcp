@@ -2,6 +2,13 @@ import { Client } from '@sendgrid/client';
 import sgMail from '@sendgrid/mail';
 import { SendGridContact, SendGridList, SendGridTemplate, SendGridStats, SendGridSingleSend } from '../types/index.js';
 
+// Escape single quotes and backslashes for SendGrid query DSL string literals.
+// Prevents query injection when user-supplied values are interpolated into
+// queries like `email IN ('${value}')` or `CONTAINS(list_ids, '${value}')`.
+function escapeQueryValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 export class SendGridService {
   private client: Client;
 
@@ -31,10 +38,10 @@ export class SendGridService {
       method: 'POST',
       url: '/v3/marketing/contacts/search',
       body: {
-        query: `email IN (${emails.map(email => `'${email}'`).join(',')})`
+        query: `email IN (${emails.map(email => `'${escapeQueryValue(email)}'`).join(',')})`
       }
     });
-    
+
     const contacts = (searchResponse.body as { result: SendGridContact[] }).result || [];
     const contactIds = contacts.map(contact => contact.id).filter(id => id) as string[];
 
@@ -77,7 +84,7 @@ export class SendGridService {
       method: 'POST',
       url: '/v3/marketing/contacts/search',
       body: {
-        query: `CONTAINS(list_ids, '${listId}')`
+        query: `CONTAINS(list_ids, '${escapeQueryValue(listId)}')`
       }
     });
     return (response.body as { result: SendGridContact[] }).result || [];
@@ -96,7 +103,7 @@ export class SendGridService {
       method: 'GET',
       url: '/v3/marketing/lists'
     });
-    return (response.body as { result: SendGridList[] }).result;
+    return (response.body as { result: SendGridList[] }).result || [];
   }
 
   async deleteList(listId: string): Promise<void> {
@@ -133,10 +140,10 @@ export class SendGridService {
       method: 'POST',
       url: '/v3/marketing/contacts/search',
       body: {
-        query: `email IN (${contactEmails.map(email => `'${email}'`).join(',')}) AND CONTAINS(list_ids, '${listId}')`
+        query: `email IN (${contactEmails.map(email => `'${escapeQueryValue(email)}'`).join(',')}) AND CONTAINS(list_ids, '${escapeQueryValue(listId)}')`
       }
     });
-    
+
     const contacts = (searchResponse.body as { result: SendGridContact[] }).result || [];
     const contactIds = contacts.map(contact => contact.id).filter(id => id) as string[];
 
@@ -243,10 +250,14 @@ export class SendGridService {
     end_date?: string;
     aggregated_by?: 'day' | 'week' | 'month';
   }): Promise<SendGridStats> {
+    // Strip undefined values so the SendGrid API doesn't receive literal "undefined"
+    const qs = Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v != null)
+    );
     const [response] = await this.client.request({
       method: 'GET',
       url: '/v3/stats',
-      qs: params
+      qs
     });
     return response.body as SendGridStats;
   }

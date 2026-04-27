@@ -26,7 +26,7 @@ const sendGridService = new SendGridService(SENDGRID_API_KEY);
 const server = new Server(
   {
     name: "sendgrid-mcp-server",
-    version: "0.2.0",
+    version: "1.0.0",
   },
   {
     capabilities: {

@@ -31,8 +31,9 @@ COPY --from=builder /app/package*.json ./
 # Install only production dependencies
 RUN npm ci --only=production
 
-# Environment variables
-ENV SENDGRID_API_KEY=your-api-key-here
+# SENDGRID_API_KEY must be passed at runtime (e.g. -e SENDGRID_API_KEY=...).
+# Do NOT bake a default — the server hard-fails on startup if missing,
+# which is correct, but a placeholder default would mask configuration errors.
 
 # Specify the command to run
 ENTRYPOINT ["node", "build/index.js"]

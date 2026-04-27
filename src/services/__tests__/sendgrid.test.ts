@@ -27,8 +27,11 @@ describe('SendGridService Integration Tests', () => {
             await service.getList(createdListId);
             throw new Error('List was not deleted');
           } catch (error: any) {
-            // Expect 404 error since list should be deleted
-            expect(error.code).toBe(404);
+            // @sendgrid/client errors expose the HTTP status as
+            // error.code (number) on newer versions and
+            // error.response.statusCode on older / underlying axios errors.
+            const status = error?.code ?? error?.response?.statusCode;
+            expect(status).toBe(404);
           }
         } catch (error) {
           console.error('Error cleaning up test list:', error);
